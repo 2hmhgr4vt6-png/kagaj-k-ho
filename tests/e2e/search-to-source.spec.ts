@@ -56,9 +56,24 @@ test.describe('search → procedure → source', () => {
     await expect(page.getByText('Try different words')).toBeVisible()
   })
 
-  test('an unverified fee is never shown as a number', async ({ page }) => {
+  test('the official passport fee is shown with its source', async ({ page }) => {
     await page.goto('/en/services/e-passport')
-    await expect(page.getByText(/Amount not verified/i).first()).toBeVisible()
+
+    await expect(
+      page.getByText('New / renewal — 34 pages', { exact: true }),
+    ).toBeVisible()
+    await expect(page.getByText('NPR 12,000').first()).toBeVisible()
+
+    // The fee page must be linked as a source on the same page.
+    await expect(
+      page.getByRole('link', { name: /राहदानीका लागि लाग्ने दस्तुर/ }),
+    ).toHaveAttribute('href', 'https://nepalpassport.gov.np/process/-41')
+  })
+
+  test('the source caveat about the published rates is visible', async ({ page }) => {
+    await page.goto('/en/services/e-passport')
+    // The department hedges with "generally"; we must not launder that away.
+    await expect(page.getByText(/rates that "generally" apply/i)).toBeVisible()
   })
 
   test('autocomplete suggests the procedure while typing', async ({ page }) => {

@@ -40,9 +40,9 @@ const ePassport: SeedProcedure = {
   whereToApplyEn:
     'You choose your application location (enrolment centre) while filling in the online pre-enrollment form, and must attend that centre at the scheduled date and time.',
   notesNe:
-    'हराएको वा चोरी भएको भनी जनाइएको राहदानी पछि फेला परे पनि यात्राका लागि प्रयोग गर्नु हुँदैन — राहदानी विभागको सूचना।\nअनलाइन फारम भर्दा अपलोड गरिने प्रत्येक स्क्यान गरिएको कागजात बढीमा ३०० KB को हुनुपर्छ।',
+    'हराएको वा चोरी भएको भनी जनाइएको राहदानी पछि फेला परे पनि यात्राका लागि प्रयोग गर्नु हुँदैन — राहदानी विभागको सूचना।\nअनलाइन फारम भर्दा अपलोड गरिने प्रत्येक स्क्यान गरिएको कागजात बढीमा ३०० KB को हुनुपर्छ।\nतल दिइएका दस्तुर राहदानी विभागको आधिकारिक दस्तुर पृष्ठबाट लिइएको हो। सो पृष्ठले यी दर “सामान्यतया” लागू हुने भनेको छ, त्यसैले रकम तिर्नुअघि पछिल्लो सूचना पुष्टि गर्नुहोस्।\nअनलाइन भुक्तानी द्रुत (expedited) सेवाका लागि मात्र हो; जिल्ला प्रशासन कार्यालयमार्फत साधारण सेवा लिने आवेदकले अनलाइन भुक्तानी गर्नु हुँदैन।',
   notesEn:
-    'A passport reported as lost or stolen must not be used for travel even if it is later recovered — advisory from the Department of Passports.\nEach scanned document uploaded during the online form must be no larger than 300 KB.',
+    'A passport reported as lost or stolen must not be used for travel even if it is later recovered — advisory from the Department of Passports.\nEach scanned document uploaded during the online form must be no larger than 300 KB.\nThe fees below are taken from the Department of Passports fee page, which describes them as the rates that "generally" apply — confirm the latest notice before paying.\nOnline payment is only for the expedited service; applicants using the regular service through a District Administration Office should not pay online.',
   // The Department of Passports process page states neither a processing time
   // nor a fee, so both are recorded as unverified rather than guessed.
   processingTimeNe: null,
@@ -95,6 +95,26 @@ const ePassport: SeedProcedure = {
       isPrimary: true,
       notes:
         'Source for the office address, phone, email, published office hours (Mon–Fri 09:00–17:00) and the lost/stolen passport advisory.',
+    },
+    {
+      key: 'dop-fees',
+      organization: 'Department of Passports, Ministry of Foreign Affairs, Government of Nepal',
+      title: 'राहदानीका लागि लाग्ने दस्तुर (Passport fees)',
+      url: 'https://nepalpassport.gov.np/process/-41',
+      sourceType: SourceType.GOVERNMENT_AGENCY,
+      isPrimary: true,
+      notes:
+        'The fee table on this page is captioned "राहदानी दस्तुर (राहदानी विभाग)" — the rates charged at the Department of Passports. The page itself hedges with "सामान्यतया" ("generally"), which is why the record carries a caveat note rather than presenting these as the only possible amounts.',
+    },
+    {
+      key: 'dop-online-payment',
+      organization: 'Department of Passports, Ministry of Foreign Affairs, Government of Nepal',
+      title: 'Online Payment — Department of Passports',
+      url: 'https://nepalpassport.gov.np/online-payment',
+      sourceType: SourceType.GOVERNMENT_AGENCY,
+      isPrimary: true,
+      notes:
+        'States that online payment applies only to the expedited service, and that applicants using the regular service through a District Administration Office should not pay online.',
     },
   ],
   documents: [
@@ -185,31 +205,54 @@ const ePassport: SeedProcedure = {
       sourceKey: 'dop-process-23',
     },
   ],
+  // Transcribed from the Department of Passports fee table, which is captioned
+  // "राहदानी दस्तुर (राहदानी विभाग)". The 34-page and 66-page columns are stored
+  // as separate rows because each is a distinct published amount.
   fees: [
-    {
-      labelNe: 'राहदानी दस्तुर (राजस्व)',
-      labelEn: 'Passport fee (revenue)',
-      kind: FeeKind.APPLICATION,
-      amountNpr: null,
-      // Recorded explicitly as unverified: the process page requires a bank
-      // voucher but does not publish the amount, and the department's fee pages
-      // were unreachable (HTTP 502) at the time of verification.
-      amountTextNe: 'रकम प्रमाणित छैन — राहदानी विभागको आधिकारिक दस्तुर सूचना हेर्नुहोस्।',
-      amountTextEn: 'Amount not verified — check the Department of Passports fee notice.',
-      basis: ClaimBasis.UNKNOWN,
-      sourceKey: null,
-    },
+    { labelNe: 'नयाँ / नवीकरण — ३४ पृष्ठ', labelEn: 'New / renewal — 34 pages',
+      kind: FeeKind.APPLICATION, amountNpr: 12000,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'नयाँ / नवीकरण — ६६ पृष्ठ', labelEn: 'New / renewal — 66 pages',
+      kind: FeeKind.APPLICATION, amountNpr: 20000,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'नयाँ / नवीकरण — ३४ पृष्ठ (१० वर्ष भन्दा कम उमेरका नाबालक)',
+      labelEn: 'New / renewal — 34 pages (minors under 10)',
+      kind: FeeKind.APPLICATION, amountNpr: 9500,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'नयाँ / नवीकरण — ६६ पृष्ठ (१० वर्ष भन्दा कम उमेरका नाबालक)',
+      labelEn: 'New / renewal — 66 pages (minors under 10)',
+      kind: FeeKind.APPLICATION, amountNpr: 14500,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'हराएको वा बिग्रिएको — ३४ पृष्ठ',
+      labelEn: 'Lost or damaged — 34 pages',
+      kind: FeeKind.DUPLICATE, amountNpr: 17000,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'हराएको वा बिग्रिएको — ६६ पृष्ठ',
+      labelEn: 'Lost or damaged — 66 pages',
+      kind: FeeKind.DUPLICATE, amountNpr: 25000,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'हराएको वा बिग्रिएको — ३४ पृष्ठ (१० वर्ष भन्दा कम उमेरका नाबालक)',
+      labelEn: 'Lost or damaged — 34 pages (minors under 10)',
+      kind: FeeKind.DUPLICATE, amountNpr: 14500,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'हराएको वा बिग्रिएको — ६६ पृष्ठ (१० वर्ष भन्दा कम उमेरका नाबालक)',
+      labelEn: 'Lost or damaged — 66 pages (minors under 10)',
+      kind: FeeKind.DUPLICATE, amountNpr: 19500,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
+    { labelNe: 'कार्यालयको गल्ती भएमा', labelEn: 'Where the office made the error',
+      kind: FeeKind.OTHER, amountNpr: 0,
+      basis: ClaimBasis.OFFICIALLY_STATED, sourceKey: 'dop-fees' },
   ],
   faqs: [
     {
       questionNe: 'पासपोर्ट बनाउन कति पैसा लाग्छ?',
       questionEn: 'How much does a Nepali passport cost?',
       answerNe:
-        'राहदानी विभागको प्रक्रिया पृष्ठमा दस्तुरको रकम उल्लेख छैन; त्यहाँ आवेदन दिनुअघि राजस्व बुझाएको बैंक भौचर वा नगदी रसिद ल्याउनुपर्ने मात्र लेखिएको छ। त्यसैले हामी यहाँ कुनै रकम दाबी गर्दैनौं — कृपया राहदानी विभागको आधिकारिक दस्तुर सूचना हेर्नुहोस्।',
+        'राहदानी विभागको आधिकारिक दस्तुर पृष्ठअनुसार नयाँ वा नवीकरणका लागि ३४ पृष्ठको रू. १२,०००/- र ६६ पृष्ठको रू. २०,०००/- लाग्छ। १० वर्ष भन्दा कम उमेरका नाबालकका लागि क्रमश: रू. ९,५००/- र रू. १४,५००/- छ। हराएको वा बिग्रिएको राहदानीको दस्तुर बढी हुन्छ, र कार्यालयको गल्ती भएमा नि:शुल्क हुन्छ। सो पृष्ठमा यी दर “सामान्यतया” लागू हुने भनी लेखिएको छ, त्यसैले कार्यालय जानुअघि पछिल्लो सूचना पुष्टि गर्नुहोस्।',
       answerEn:
-        'The Department of Passports process page does not state a fee amount; it only requires a bank voucher or cash receipt for the revenue payment before applying. We therefore do not assert an amount here — please check the department’s official fee notice.',
+        'According to the Department of Passports fee page, a new or renewed passport costs NPR 12,000 for 34 pages and NPR 20,000 for 66 pages. For minors under 10 the rates are NPR 9,500 and NPR 14,500. Lost or damaged passports cost more, and there is no charge where the office made the error. That page describes these rates as those that "generally" apply, so confirm the latest notice before visiting.',
       basis: ClaimBasis.OFFICIALLY_STATED,
-      sourceUrl: 'https://nepalpassport.gov.np/en/process/process-23',
+      sourceUrl: 'https://nepalpassport.gov.np/process/-41',
     },
     {
       questionNe: 'के अनलाइन समय (appointment) लिनैपर्छ?',

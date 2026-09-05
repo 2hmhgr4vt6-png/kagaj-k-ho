@@ -101,21 +101,32 @@ describe('published content invariants', () => {
     }
   })
 
-  it('the passport record does not assert an unverified fee amount', async () => {
-    // Regression guard for the single most tempting invention in this domain:
-    // the Department of Passports process page states no fee, so neither do we.
+  it('never attaches a number to an unverified fee, on any procedure', async () => {
+    // The core guard against the most tempting invention in this domain. An
+    // UNKNOWN-basis fee may carry explanatory text, but never an amount.
+    const fees = await prisma.fee.findMany({ where: { basis: ClaimBasis.UNKNOWN } })
+    for (const fee of fees) {
+      expect(fee.amountNpr, `"${fee.labelEn}" has an amount but an UNKNOWN basis`).toBeNull()
+    }
+  })
+
+  it('every passport fee amount is sourced to the official fee page', async () => {
     const procedure = await getPublishedProcedure('e-passport')
     expect(procedure).not.toBeNull()
 
-    for (const fee of procedure!.fees) {
-      if (fee.basis === ClaimBasis.UNKNOWN) {
-        expect(fee.amountNpr).toBeNull()
-      }
+    const priced = procedure!.fees.filter((fee) => fee.amountNpr !== null)
+    expect(priced.length).toBeGreaterThan(0)
+
+    for (const fee of priced) {
+      expect(fee.basis).toBe(ClaimBasis.OFFICIALLY_STATED)
+      expect(fee.source?.url).toBe('https://nepalpassport.gov.np/process/-41')
     }
-    const officialAmounts = procedure!.fees.filter(
-      (fee) => fee.basis === ClaimBasis.OFFICIALLY_STATED && fee.amountNpr !== null,
-    )
-    expect(officialAmounts).toEqual([])
+
+    // Spot-check the two headline amounts actually published in the table.
+    const byLabel = new Map(procedure!.fees.map((fee) => [fee.labelEn, fee.amountNpr]))
+    expect(byLabel.get('New / renewal — 34 pages')).toBe(12000)
+    expect(byLabel.get('New / renewal — 66 pages')).toBe(20000)
+    expect(byLabel.get('Where the office made the error')).toBe(0)
   })
 
   it('unverified procedures are never published', async () => {

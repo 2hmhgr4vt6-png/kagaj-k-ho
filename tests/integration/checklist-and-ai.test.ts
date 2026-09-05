@@ -45,9 +45,39 @@ describe('answerFromVerifiedContent', () => {
     expect(answer.answer).toContain('National Identity Card')
   })
 
-  it('never asserts an unverified fee as a number', async () => {
+  it('reports the officially published passport fees', async () => {
     const procedure = await getPublishedProcedure('e-passport')
     const answer = answerFromVerifiedContent(procedure!, 'en')
+    expect(answer.answer).toContain('NPR 12000')
+    expect(answer.answer).toContain('New / renewal — 34 pages')
+  })
+
+  it('falls back to "not verified" when a procedure has no sourced fee', async () => {
+    // Built from a real record with its sourced fees removed, so the guard is
+    // exercised even when every seeded procedure happens to have verified fees.
+    const procedure = await getPublishedProcedure('e-passport')
+    const withoutFees = { ...procedure!, fees: [] }
+    const answer = answerFromVerifiedContent(withoutFees, 'en')
+    expect(answer.answer).toContain('Fee not verified')
+  })
+
+  it('omits fees whose basis is not officially stated', async () => {
+    const procedure = await getPublishedProcedure('e-passport')
+    const invented = {
+      ...procedure!,
+      fees: [
+        {
+          ...procedure!.fees[0]!,
+          labelEn: 'Agent facilitation charge',
+          labelNe: 'एजेन्ट शुल्क',
+          amountNpr: 3000,
+          basis: 'USER_REPORTED' as const,
+        },
+      ],
+    }
+    const answer = answerFromVerifiedContent(invented, 'en')
+    // A user-reported amount must never be presented as an official fee.
+    expect(answer.answer).not.toContain('Agent facilitation charge')
     expect(answer.answer).toContain('Fee not verified')
   })
 

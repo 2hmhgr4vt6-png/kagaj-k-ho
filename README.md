@@ -32,9 +32,12 @@ not just in policy:
    degrades a 🟢 badge to 🟡 the moment its review date passes, regardless of what the
    database says.
 
-A worked example of rule 2 is in the seed itself: the Department of Passports process
-page does not state a passport fee, so **this project asserts no passport fee anywhere**.
-There is a regression test for it.
+Rule 2 is not theoretical. The passport fee was initially recorded as *unverified*
+because the Department of Passports process page states no amount and its fee page was
+returning HTTP 502. It was only added once that page could be read and its caption
+confirmed as the department's own rate table — and the record still carries the hedge
+the source itself uses ("the rates that *generally* apply"). Tests assert that an
+unverified fee can never carry a number, on any procedure.
 
 ---
 
@@ -173,20 +176,27 @@ The seed contains **only what could be verified from a primary official source o
 
 | Procedure | Official source |
 |---|---|
-| **Applying for an e-passport from within Nepal** (`/services/e-passport`) | Department of Passports — [*When applying for a passport in Nepal*](https://nepalpassport.gov.np/en/process/process-23) and the [department homepage](https://nepalpassport.gov.np/en) (office address, phone, hours, lost/stolen advisory) |
+| **Applying for an e-passport from within Nepal** (`/services/e-passport`) | Department of Passports — [*When applying for a passport in Nepal*](https://nepalpassport.gov.np/en/process/process-23) (documents, steps), [*राहदानीका लागि लाग्ने दस्तुर*](https://nepalpassport.gov.np/process/-41) (fee table), [*Online Payment*](https://nepalpassport.gov.np/online-payment) (expedited-only caveat) and the [department homepage](https://nepalpassport.gov.np/en) (office address, phone, hours, lost/stolen advisory) |
 | **Registering for the National Identity Card** (`/services/national-id-card`) | Department of National ID and Civil Registration — [FAQ: राष्ट्रिय परिचयपत्र](https://donidcr.gov.np/pages/abboyed-asked-questions--rational-identity-10/) and the [department homepage](https://donidcr.gov.np/) |
 | **Birth registration** (`/services/birth-registration`) | Department of National ID and Civil Registration — [FAQ: पञ्जीकरण](https://donidcr.gov.np/pages/about-frequently-asked-questions--registration-5/), with [राष्ट्रिय परिचयपत्र तथा पञ्जीकरण नियमावली, २०७७](https://donidcr.gov.np/content/19/national-identity-card-and-registration-regulations--2077/) cited as the governing regulation |
 
-What is deliberately **absent** from these records:
+What *is* asserted, because the sources state it: the Department of Passports fee
+schedule (NPR 12,000 / 20,000 for a new or renewed 34- / 66-page passport, NPR 9,500 /
+14,500 for minors under 10, more for lost or damaged, free where the office made the
+error); the National ID card is free and a duplicate costs NPR 500 through Nepal Rastra
+Bank; personal events registered within 35 days are free and attract a late fee after
+that.
 
-- **No passport fee amount.** The process page requires a bank voucher but publishes no
-  amount, and the department's fee pages returned HTTP 502 during research. The record
-  says so explicitly and the FAQ answers "how much does a passport cost?" with that fact.
-- **No processing times** for any of the three. None of the sources state one.
+What is deliberately **absent**:
 
-What *is* asserted, because the sources state it: the National ID card is free and a
-duplicate costs NPR 500 through Nepal Rastra Bank; personal events registered within 35
-days are free and attract a late fee after that.
+- **No processing times** for any of the three. None of the sources state one, so all
+  three render "Not verified — check the official source".
+- **No single machine-readable price** in the passport page's `HowTo` JSON-LD. Where a
+  procedure publishes a schedule of alternatives, any one number would misrepresent it,
+  so structured data carries no price rather than a wrong one.
+- **No District Administration Office fee.** The department's online-payment page
+  distinguishes expedited from regular service but publishes no separate DAO rate; the
+  record notes the distinction instead of inventing an amount.
 
 ### Unpublished (drafts awaiting fact-check)
 
@@ -298,7 +308,7 @@ container.
 
 ## Testing
 
-79 unit/integration tests and 36 end-to-end tests (desktop + mobile viewports).
+82 unit/integration tests and 38 end-to-end tests (desktop + mobile viewports).
 
 ```bash
 npm test          # vitest — needs a migrated, seeded database
@@ -312,8 +322,8 @@ canonical/hreflang tags and structured data.
 
 The integration suite asserts product invariants rather than implementation details: no
 officially-stated claim without a source, no published procedure without a verification
-record, every primary source on a `.gov.np` host, and no unverified fee rendered as a
-number.
+record, every primary source on a `.gov.np` host, no unverified fee rendered as a
+number, and every passport fee amount traceable to the official fee page.
 
 > On a machine whose preinstalled Chromium build does not match this Playwright release,
 > set `PLAYWRIGHT_CHROMIUM_PATH` to the browser binary instead of downloading a second one.
@@ -324,8 +334,12 @@ number.
 
 - **Coverage is three procedures.** That is the point — the remaining categories are
   seeded as unpublished drafts rather than filled with plausible-sounding invention.
-  Several agency sites (Office of the Company Registrar, the passport fee pages) were
-  returning 5xx during research and could not be transcribed.
+  The blockers are documented per record in `prisma/seed-procedures.ts`: the Office of
+  the Company Registrar and the Department of Transport Management sites were
+  unreachable, and the Inland Revenue Department's PAN registration page
+  (`/content/6035/`) serves a title and a publication date but an **empty body** — the
+  procedure text visible in search-engine snippets is not in the page the server
+  currently returns. None of that is enough to publish from.
 - **Rate limiting is process-local** (in-memory fixed window). Correct for a single
   instance; a multi-instance deployment should swap `lib/rate-limit.ts` for Redis/Upstash.
 - **Search ranking is not personalised or typo-tolerant beyond trigrams.** Queries under
@@ -349,7 +363,9 @@ number.
 ## Next recommended features
 
 1. **Finish the fact-check backlog** — PAN, driving licence, citizenship and company
-   registration, using the admin workflow already built.
+   registration, using the admin workflow already built. All four are currently blocked
+   on the source side rather than on tooling; a headless-browser fetch step in
+   `check:sources` would help with the JS-rendered agency pages.
 2. **Automated drift alerts** — `check:sources` already detects content-hash changes;
    wire it to email or Slack so an editor is told the day a ministry page changes.
 3. **District/local-government layer** — fees and offices vary by palika; the `Office`

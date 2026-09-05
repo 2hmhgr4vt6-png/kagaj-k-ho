@@ -594,12 +594,12 @@ function StructuredData({
       text: pickWithFallback(locale, step.detailNe, step.detailEn),
       url: step.actionUrl,
     })),
-    // Only emit a machine-readable cost when it is officially sourced —
-    // never let an estimate leak into a rich result as if it were a fact.
-    estimatedCostNpr:
-      officialFees.length > 0
-        ? officialFees.reduce((sum, fee) => sum + (fee.amountNpr ?? 0), 0)
-        : null,
+    // Only emit a machine-readable cost when exactly one officially sourced
+    // amount applies. Where a procedure publishes a schedule of alternatives
+    // (34- vs 66-page passport, adult vs minor, lost vs new), any single number
+    // would misrepresent it — and summing them would be nonsense. Rich results
+    // get no price rather than a wrong one.
+    estimatedCostNpr: officialFees.length === 1 ? (officialFees[0]!.amountNpr ?? null) : null,
   })
 
   const faq = faqJsonLd(
