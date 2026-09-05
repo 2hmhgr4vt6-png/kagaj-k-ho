@@ -1,0 +1,653 @@
+// Kagaj K Ho? — data model
+//
+// Design principle: every user-facing factual claim (fee, processing time,
+// required document, step) must be traceable to an OfficialSource row, and the
+// claim itself records HOW it is known (OFFICIALLY_STATED / DERIVED / ESTIMATED
+// / USER_REPORTED). Nothing here stores citizen identity-document numbers.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm, unaccent]
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Editorial lifecycle: Draft -> Source attached -> Fact checked -> Reviewed ->
+/// Published -> (scheduled review) -> Re-verified.
+enum ContentStatus {
+  DRAFT
+  SOURCE_ATTACHED
+  FACT_CHECKED
+  IN_REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+/// The trust badge shown on every page.
+enum VerificationStatus {
+  /// 🟢 Every published claim is backed by a current official source.
+  VERIFIED
+  /// 🟡 Published from an official source but past its review date, or partially sourced.
+  NEEDS_VERIFICATION
+  /// 🔴 No usable official source, or official sources contradict each other.
+  UNAVAILABLE
+  /// 🔴 Two or more official sources disagree; we show both rather than picking one.
+  SOURCE_CONFLICT
+}
+
+/// How confident we are in the record as a whole.
+enum ConfidenceLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// Provenance of an individual claim. Never render USER_REPORTED as official.
+enum ClaimBasis {
+  /// Written verbatim on an official source.
+  OFFICIALLY_STATED
+  /// Computed from officially stated values (e.g. summing published fees).
+  DERIVED
+  /// Our estimate. Must be labelled as an estimate in the UI.
+  ESTIMATED
+  /// Reported by users. Informational only, never presented as fact.
+  USER_REPORTED
+  /// We looked and could not verify it.
+  UNKNOWN
+}
+
+enum SourceType {
+  GOVERNMENT_AGENCY
+  GOVERNMENT_PORTAL
+  GAZETTE_OR_LAW
+  LOCAL_GOVERNMENT
+  /// Only used when no primary source exists. Always labelled "secondary" in the UI.
+  REPUTABLE_SECONDARY
+}
+
+enum FeeKind {
+  APPLICATION
+  SERVICE
+  EXPEDITED
+  LATE
+  DUPLICATE
+  RENEWAL
+  OTHER
+}
+
+enum AppointmentRequirement {
+  REQUIRED
+  OPTIONAL
+  NOT_REQUIRED
+  UNKNOWN
+}
+
+enum ReportReason {
+  FEE_CHANGED
+  DOCUMENTS_CHANGED
+  OFFICE_CHANGED
+  LINK_BROKEN
+  PROCESS_CHANGED
+  OTHER
+}
+
+enum ReportStatus {
+  NEW
+  TRIAGED
+  ACCEPTED
+  REJECTED
+  RESOLVED
+}
+
+enum AdminRole {
+  /// Full access including admin management.
+  OWNER
+  /// Can publish and verify content.
+  EDITOR
+  /// Can draft and attach sources but not publish.
+  CONTRIBUTOR
+  /// Read-only.
+  VIEWER
+}
+
+enum NoticeLevel {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// ---------------------------------------------------------------------------
+// Admin & audit
+// ---------------------------------------------------------------------------
+
+model Admin {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  /// bcrypt hash. Plaintext passwords are never stored or logged.
+  passwordHash String
+  role         AdminRole @default(CONTRIBUTOR)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  auditLogs         AuditLog[]
+  verifications     VerificationRecord[]
+  procedureVersions ProcedureVersion[]
+  handledReports    Report[]             @relation("ReportHandler")
+
+  @@map("admins")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  adminId    String?
+  admin      Admin?   @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  /// e.g. "procedure.publish", "fee.update", "source.create", "report.resolve"
+  action     String
+  entityType String
+  entityId   String
+  summary    String
+  /// Shallow before/after diff. Must not contain personal data.
+  diff       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy
+// ---------------------------------------------------------------------------
+
+model Category {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  nameEn        String
+  nameNe        String
+  descriptionEn String?
+  descriptionNe String?
+  /// Emoji or icon key rendered next to the category.
+  icon          String?
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  procedures Procedure[]
+
+  @@map("categories")
+}
+
+/// "Browse by life event" navigation (जन्म, विवाह, विदेश जाने ...).
+model LifeEvent {
+  id        String  @id @default(cuid())
+  slug      String  @unique
+  nameEn    String
+  nameNe    String
+  icon      String?
+  sortOrder Int     @default(0)
+
+  procedures ProcedureLifeEvent[]
+
+  @@map("life_events")
+}
+
+model ProcedureLifeEvent {
+  procedureId String
+  lifeEventId String
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  lifeEvent   LifeEvent @relation(fields: [lifeEventId], references: [id], onDelete: Cascade)
+
+  @@id([procedureId, lifeEventId])
+  @@map("procedure_life_events")
+}
+
+// ---------------------------------------------------------------------------
+// Procedures
+// ---------------------------------------------------------------------------
+
+model Procedure {
+  id   String @id @default(cuid())
+  slug String @unique
+
+  titleEn       String
+  titleNe       String
+  summaryEn     String
+  summaryNe     String
+  /// Longer description, optional.
+  descriptionEn String?
+  descriptionNe String?
+  eligibilityEn String?
+  eligibilityNe String?
+  /// Caveats, exceptions and edge cases. Rendered in a distinct block.
+  notesEn       String?
+  notesNe       String?
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  status             ContentStatus      @default(DRAFT)
+  verificationStatus VerificationStatus @default(NEEDS_VERIFICATION)
+  confidence         ConfidenceLevel    @default(LOW)
+
+  /// Null until a human has actually compared the record against a source.
+  lastVerifiedAt DateTime?
+  /// When this record must be re-checked. Past due => badge degrades to 🟡.
+  nextReviewAt   DateTime?
+  publishedAt    DateTime?
+
+  appointmentRequirement AppointmentRequirement @default(UNKNOWN)
+  appointmentNoteEn      String?
+  appointmentNoteNe      String?
+  /// URL of the official appointment/pre-enrollment system, if one exists.
+  appointmentUrl         String?
+
+  processingTimeEn    String?
+  processingTimeNe    String?
+  processingTimeBasis ClaimBasis @default(UNKNOWN)
+
+  whereToApplyEn String?
+  whereToApplyNe String?
+
+  /// Popularity counter for "सबैभन्दा धेरै खोजिएका". Aggregate only, no user data.
+  viewCount   Int @default(0)
+  searchCount Int @default(0)
+
+  /// SEO overrides; generated from content when null.
+  metaTitleEn       String?
+  metaTitleNe       String?
+  metaDescriptionEn String?
+  metaDescriptionNe String?
+
+  /// Space-separated normalized search terms including Nepali, English and
+  /// romanised transliterations. Maintained by lib/search/normalize.ts.
+  searchText String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  steps         ProcedureStep[]
+  documents     ProcedureDocument[]
+  fees          Fee[]
+  sources       OfficialSource[]
+  verifications VerificationRecord[]
+  versions      ProcedureVersion[]
+  reports       Report[]
+  faqs          Faq[]
+  notices       Notice[]
+  offices       ProcedureOffice[]
+  aliases       ProcedureAlias[]
+  lifeEvents    ProcedureLifeEvent[]
+
+  @@index([status, verificationStatus])
+  @@index([categoryId])
+  @@index([nextReviewAt])
+  /// Trigram index. Nepali (Devanagari) has no bundled Postgres text-search
+  /// configuration, so trigram similarity is our primary matcher: it is
+  /// script-agnostic and tolerates misspelled romanisations ("rahdani").
+  @@index([searchText(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("procedures")
+}
+
+/// Search aliases and transliterations: "passport banaune", "राहदानी", "pp".
+model ProcedureAlias {
+  id          String    @id @default(cuid())
+  procedureId String
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  alias       String
+  /// "ne" | "en" | "translit"
+  kind        String    @default("translit")
+
+  @@unique([procedureId, alias])
+  @@index([alias(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("procedure_aliases")
+}
+
+model ProcedureStep {
+  id          String          @id @default(cuid())
+  procedureId String
+  procedure   Procedure       @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  order       Int
+  titleEn     String
+  titleNe     String
+  detailEn    String?
+  detailNe    String?
+  /// Official link for this specific step (e.g. the pre-enrollment portal).
+  actionUrl   String?
+  basis       ClaimBasis      @default(OFFICIALLY_STATED)
+  sourceId    String?
+  source      OfficialSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([procedureId, order])
+  @@map("procedure_steps")
+}
+
+/// A reusable document definition (e.g. "Nepali citizenship certificate").
+model RequiredDocument {
+  id            String  @id @default(cuid())
+  slug          String  @unique
+  nameEn        String
+  /// Official Nepali terminology is preserved verbatim; English is a gloss.
+  nameNe        String
+  descriptionEn String?
+  descriptionNe String?
+
+  procedures ProcedureDocument[]
+
+  @@map("required_documents")
+}
+
+/// Join row: which document a procedure needs, and on whose authority.
+model ProcedureDocument {
+  id          String           @id @default(cuid())
+  procedureId String
+  documentId  String
+  procedure   Procedure        @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  document    RequiredDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  order       Int             @default(0)
+  isMandatory Boolean         @default(true)
+  /// Procedure-specific qualifier, e.g. "original, plus one photocopy".
+  conditionEn String?
+  conditionNe String?
+  basis       ClaimBasis      @default(OFFICIALLY_STATED)
+  sourceId    String?
+  source      OfficialSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([procedureId, documentId])
+  @@map("procedure_documents")
+}
+
+model Fee {
+  id          String    @id @default(cuid())
+  procedureId String
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+
+  labelEn      String
+  labelNe      String
+  kind         FeeKind         @default(APPLICATION)
+  /// Amount in the smallest unit is unnecessary here; NPR has no sub-unit in
+  /// government fee schedules. Null means "not verified".
+  amountNpr    Int?
+  /// Free-form when the fee is a range or conditional (e.g. "USD 25 or equivalent").
+  amountTextEn String?
+  amountTextNe String?
+  /// OFFICIALLY_STATED requires a sourceId — enforced by lib/content/validate.ts.
+  basis        ClaimBasis      @default(UNKNOWN)
+  sourceId     String?
+  source       OfficialSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  order        Int             @default(0)
+
+  @@map("fees")
+}
+
+// ---------------------------------------------------------------------------
+// Offices
+// ---------------------------------------------------------------------------
+
+model Office {
+  id             String          @id @default(cuid())
+  slug           String          @unique
+  nameEn         String
+  nameNe         String
+  organizationEn String
+  organizationNe String
+  addressEn      String?
+  addressNe      String?
+  district       String?
+  province       String?
+  /// Only officially published contact details are stored.
+  phone          String?
+  email          String?
+  website        String?
+  mapUrl         String?
+  sourceId       String?
+  source         OfficialSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  hours      OfficeHour[]
+  procedures ProcedureOffice[]
+
+  @@map("offices")
+}
+
+model OfficeHour {
+  id        String  @id @default(cuid())
+  officeId  String
+  office    Office  @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  /// 0 = Sunday .. 6 = Saturday (Nepal's work week starts Sunday).
+  dayOfWeek Int
+  opensAt   String?
+  closesAt  String?
+  isClosed  Boolean @default(false)
+  noteEn    String?
+  noteNe    String?
+
+  @@unique([officeId, dayOfWeek])
+  @@map("office_hours")
+}
+
+model ProcedureOffice {
+  procedureId String
+  officeId    String
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  office      Office    @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  /// e.g. "Central enrolment centre", "Any District Administration Office".
+  roleEn      String?
+  roleNe      String?
+
+  @@id([procedureId, officeId])
+  @@map("procedure_offices")
+}
+
+// ---------------------------------------------------------------------------
+// Sources & verification
+// ---------------------------------------------------------------------------
+
+model OfficialSource {
+  id          String     @id @default(cuid())
+  procedureId String?
+  procedure   Procedure? @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+
+  organization   String
+  title          String
+  url            String
+  sourceType     SourceType @default(GOVERNMENT_AGENCY)
+  /// Publication/last-update date printed on the source itself, when shown.
+  publishedAt    DateTime?
+  /// When we last opened this URL and read it.
+  checkedAt      DateTime
+  /// Last HTTP status observed by scripts/check-source-urls.ts.
+  lastHttpStatus Int?
+  isPrimary      Boolean    @default(true)
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  snapshots     SourceSnapshot[]
+  verifications VerificationRecord[]
+  steps         ProcedureStep[]
+  documents     ProcedureDocument[]
+  fees          Fee[]
+  offices       Office[]
+
+  @@index([procedureId])
+  @@index([url])
+  @@map("official_sources")
+}
+
+/// A point-in-time record of what a source said, so we can prove drift.
+/// We store a hash and a short excerpt — not a full copy of the page.
+model SourceSnapshot {
+  id          String         @id @default(cuid())
+  sourceId    String
+  source      OfficialSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the normalized extracted text.
+  contentHash String
+  /// Short excerpt kept for editorial comparison (bounded length).
+  excerpt     String?
+  capturedAt  DateTime       @default(now())
+  httpStatus  Int?
+
+  @@index([sourceId, capturedAt])
+  @@map("source_snapshots")
+}
+
+/// One row per fact-check pass. This is the audit trail behind the 🟢 badge.
+model VerificationRecord {
+  id          String          @id @default(cuid())
+  procedureId String
+  procedure   Procedure       @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  sourceId    String?
+  source      OfficialSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  adminId     String?
+  admin       Admin?          @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  outcome      VerificationStatus
+  /// What was compared and what changed.
+  notes        String?
+  verifiedAt   DateTime           @default(now())
+  /// Review date set at the time of this verification.
+  nextReviewAt DateTime?
+
+  @@index([procedureId, verifiedAt])
+  @@map("verification_records")
+}
+
+/// Immutable snapshot of a procedure at publish time (version history).
+model ProcedureVersion {
+  id          String    @id @default(cuid())
+  procedureId String
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  version     Int
+  /// Full serialized procedure incl. steps, docs, fees and sources.
+  payload     Json
+  changeNote  String?
+  createdById String?
+  createdBy   Admin?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+
+  @@unique([procedureId, version])
+  @@map("procedure_versions")
+}
+
+// ---------------------------------------------------------------------------
+// Notices, FAQ, translations
+// ---------------------------------------------------------------------------
+
+model Notice {
+  id          String      @id @default(cuid())
+  procedureId String?
+  procedure   Procedure?  @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  level       NoticeLevel @default(INFO)
+  titleEn     String
+  titleNe     String
+  bodyEn      String
+  bodyNe      String
+  sourceUrl   String?
+  startsAt    DateTime    @default(now())
+  endsAt      DateTime?
+  createdAt   DateTime    @default(now())
+
+  @@index([procedureId, startsAt])
+  @@map("notices")
+}
+
+model Faq {
+  id          String     @id @default(cuid())
+  procedureId String?
+  procedure   Procedure? @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  questionEn  String
+  questionNe  String
+  answerEn    String
+  answerNe    String
+  order       Int        @default(0)
+  basis       ClaimBasis @default(OFFICIALLY_STATED)
+  sourceUrl   String?
+
+  @@index([procedureId, order])
+  @@map("faqs")
+}
+
+/// UI string translations that are editable without a redeploy.
+model Translation {
+  id     String @id @default(cuid())
+  key    String
+  locale String
+  value  String
+
+  @@unique([key, locale])
+  @@map("translations")
+}
+
+// ---------------------------------------------------------------------------
+// User reports & analytics
+// ---------------------------------------------------------------------------
+
+/// "यो जानकारी गलत/पुरानो छ?" submissions. Deliberately collects no identity
+/// documents and no required contact details.
+model Report {
+  id             String       @id @default(cuid())
+  procedureId    String
+  procedure      Procedure    @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  reason         ReportReason
+  message        String?
+  /// Optional, voluntary. Used only to follow up on the report.
+  contactEmail   String?
+  /// Truncated + salted hash of the client IP, for abuse rate-limiting only.
+  submitterHash  String?
+  status         ReportStatus @default(NEW)
+  handledById    String?
+  handledBy      Admin?       @relation("ReportHandler", fields: [handledById], references: [id], onDelete: SetNull)
+  resolutionNote String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([status, createdAt])
+  @@index([procedureId])
+  @@map("reports")
+}
+
+/// Anonymous product analytics. No IP, no user agent, no identifiers.
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  /// search | procedure_view | source_click | report_outdated |
+  /// language_change | checklist_download
+  name      String
+  locale    String?
+  /// Non-identifying context, e.g. { "slug": "e-passport", "resultCount": 4 }.
+  props     Json?
+  createdAt DateTime @default(now())
+
+  @@index([name, createdAt])
+  @@map("analytics_events")
+}
+
+/// Sponsored placements. Sponsors can never alter factual procedure fields —
+/// this table is intentionally disjoint from Procedure content.
+model SponsorSlot {
+  id        String    @id @default(cuid())
+  /// e.g. "home_below_popular", "procedure_sidebar"
+  placement String
+  label     String
+  /// Rendered with a mandatory "प्रायोजित / Sponsored" disclosure.
+  headline  String
+  body      String?
+  targetUrl String
+  isActive  Boolean   @default(false)
+  startsAt  DateTime?
+  endsAt    DateTime?
+
+  @@index([placement, isActive])
+  @@map("sponsor_slots")
+}
