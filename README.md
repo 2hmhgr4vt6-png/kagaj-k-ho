@@ -125,9 +125,32 @@ npm run validate:content # re-run the publication gate over the live database
 npm run check:sources    # fetch every source URL, record HTTP status + content hash
 ```
 
-`check:sources` is the drift detector: it stores a SHA-256 of each source page's text
-and reports which pages changed since the last snapshot. Run it on a schedule; changed
-and failing sources surface in **Admin → Outdated queue**.
+`check:sources` is the drift detector. It extracts each source page's **main content
+region**, hashes that, and reports what changed since the last snapshot. Run it on a
+schedule; everything it flags surfaces in **Admin → Outdated queue**.
+
+Hashing the whole page — the obvious implementation — fails in both directions on real
+Nepali government sites, and both failures were observed here:
+
+- **Over-sensitive.** The hash picks up footer link lists, contact blocks and rotating
+  notice sidebars. One unrelated ministry notice marks every source on that domain as
+  changed, and editors learn to ignore the alerts.
+- **Under-sensitive, which is the dangerous one.** Several agency pages render their body
+  client-side and serve only a shell. The hash then covers the shell forever, so the
+  published requirements can change with no alert — a stale page keeps looking freshly
+  checked.
+
+A page-size heuristic does not separate these. The Inland Revenue Department's PAN page
+has an **empty body** but extracts ~4,300 characters of chrome; the Department of
+Passports fee page, which carries the actual fee table, extracts ~1,900. Only the content
+region tells them apart — measured on the live pages, that page's main region holds 470
+characters against a 1,737-character document, while the DoNIDCR regulations page holds
+**75 characters inside a 43,170-character shell**.
+
+So a source that responds `200` but serves no readable body is reported as `THIN_CONTENT`
+and given its own panel in the admin queue, never a green tick. Its hash is deliberately
+**not** snapshotted, because storing it would make the next run report "unchanged" and
+hide the problem.
 
 ---
 
@@ -164,6 +187,10 @@ and failing sources surface in **Admin → Outdated queue**.
 ### Admin (`/admin`, noindex, session-gated)
 
 Dashboard · Procedures · Procedure editor · Outdated queue · Sources · Reports · Audit log
+
+The **Outdated queue** is the editorial work list: procedures past their review date,
+recorded source conflicts, failing source URLs, sources whose content cannot be read
+automatically, and sources that have drifted since a previous snapshot.
 
 ---
 
@@ -308,7 +335,7 @@ container.
 
 ## Testing
 
-82 unit/integration tests and 38 end-to-end tests (desktop + mobile viewports).
+92 unit/integration tests and 40 end-to-end tests (desktop + mobile viewports).
 
 ```bash
 npm test          # vitest — needs a migrated, seeded database
@@ -340,6 +367,11 @@ number, and every passport fee amount traceable to the official fee page.
   (`/content/6035/`) serves a title and a publication date but an **empty body** — the
   procedure text visible in search-engine snippets is not in the page the server
   currently returns. None of that is enough to publish from.
+- **The drift detector cannot see client-rendered pages.** It now says so explicitly
+  (`THIN_CONTENT`) instead of reporting them as unchanged, but those sources still need a
+  human on a calendar. The `THIN_CONTENT` threshold is a calibrated length cutoff, which
+  is a heuristic: it errs toward flagging, since a false flag only costs a re-read while a
+  false pass hides staleness.
 - **Rate limiting is process-local** (in-memory fixed window). Correct for a single
   instance; a multi-instance deployment should swap `lib/rate-limit.ts` for Redis/Upstash.
 - **Search ranking is not personalised or typo-tolerant beyond trigrams.** Queries under
@@ -363,9 +395,10 @@ number, and every passport fee amount traceable to the official fee page.
 ## Next recommended features
 
 1. **Finish the fact-check backlog** — PAN, driving licence, citizenship and company
-   registration, using the admin workflow already built. All four are currently blocked
-   on the source side rather than on tooling; a headless-browser fetch step in
-   `check:sources` would help with the JS-rendered agency pages.
+   registration, using the admin workflow already built. All four are blocked on the
+   source side rather than on tooling. `check:sources` now identifies exactly which
+   sources are unreadable; the next step is an optional headless-browser render pass for
+   those, so client-rendered agency pages can be monitored like any other.
 2. **Automated drift alerts** — `check:sources` already detects content-hash changes;
    wire it to email or Slack so an editor is told the day a ministry page changes.
 3. **District/local-government layer** — fees and offices vary by palika; the `Office`

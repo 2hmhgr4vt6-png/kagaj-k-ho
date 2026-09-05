@@ -73,6 +73,20 @@ enum SourceType {
   REPUTABLE_SECONDARY
 }
 
+/// Result of the automated source check (scripts/check-source-urls.ts).
+enum SourceCheckOutcome {
+  /// A usable main content region was read and hashed.
+  OK
+  /// The page was served, but its main content region is effectively empty —
+  /// almost always client-rendered. The stored hash proves nothing, so the
+  /// source must be re-read by a human rather than trusted as unchanged.
+  THIN_CONTENT
+  /// The server responded with 4xx/5xx.
+  HTTP_ERROR
+  /// DNS failure, timeout or connection reset.
+  UNREACHABLE
+}
+
 enum FeeKind {
   APPLICATION
   SERVICE
@@ -458,18 +472,24 @@ model OfficialSource {
   procedureId String?
   procedure   Procedure? @relation(fields: [procedureId], references: [id], onDelete: Cascade)
 
-  organization   String
-  title          String
-  url            String
-  sourceType     SourceType @default(GOVERNMENT_AGENCY)
+  organization     String
+  title            String
+  url              String
+  sourceType       SourceType          @default(GOVERNMENT_AGENCY)
   /// Publication/last-update date printed on the source itself, when shown.
-  publishedAt    DateTime?
+  publishedAt      DateTime?
   /// When we last opened this URL and read it.
-  checkedAt      DateTime
+  checkedAt        DateTime
   /// Last HTTP status observed by scripts/check-source-urls.ts.
-  lastHttpStatus Int?
-  isPrimary      Boolean    @default(true)
-  notes          String?
+  lastHttpStatus   Int?
+  /// Outcome of the last automated check. THIN_CONTENT means the stored hash
+  /// covers only a shell and must not be read as "content unchanged".
+  lastCheckOutcome SourceCheckOutcome?
+  /// When the automated checker last ran against this URL. Distinct from
+  /// `checkedAt`, which records when a human last read the page.
+  lastCheckedAt    DateTime?
+  isPrimary        Boolean             @default(true)
+  notes            String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -489,15 +509,20 @@ model OfficialSource {
 /// A point-in-time record of what a source said, so we can prove drift.
 /// We store a hash and a short excerpt — not a full copy of the page.
 model SourceSnapshot {
-  id          String         @id @default(cuid())
-  sourceId    String
-  source      OfficialSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  id             String         @id @default(cuid())
+  sourceId       String
+  source         OfficialSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   /// SHA-256 of the normalized extracted text.
-  contentHash String
+  contentHash    String
   /// Short excerpt kept for editorial comparison (bounded length).
-  excerpt     String?
-  capturedAt  DateTime       @default(now())
-  httpStatus  Int?
+  excerpt        String?
+  capturedAt     DateTime       @default(now())
+  httpStatus     Int?
+  /// Characters of text in the extracted main region. A collapse in this
+  /// number between snapshots means the page stopped serving its content.
+  mainTextLength Int?
+  /// Which selector the main region was taken from, for debugging extraction.
+  extractedVia   String?
 
   @@index([sourceId, capturedAt])
   @@map("source_snapshots")

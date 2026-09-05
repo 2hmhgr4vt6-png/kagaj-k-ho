@@ -500,7 +500,7 @@ const birthRegistration: SeedProcedure = {
       sourceType: SourceType.GAZETTE_OR_LAW,
       isPrimary: true,
       notes:
-        'The governing regulation. Listed for reference; individual claims on this record are cited to the departmental FAQ.',
+        'The governing regulation. Listed for reference only — individual claims on this record are cited to the departmental FAQ, not to this page. Note that this URL is a document-download stub: it serves ~75 characters of readable content inside a 43,000-character shell, so the automated drift detector reports it as THIN_CONTENT and it must be re-read by hand.',
     },
   ],
   documents: [

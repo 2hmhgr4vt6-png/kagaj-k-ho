@@ -49,6 +49,31 @@ test.describe('admin', () => {
     await expect(page.getByRole('button', { name: 'Publish' })).toBeDisabled()
   })
 
+  test('the outdated queue separates unreadable sources from failing ones', async ({ page }) => {
+    await page.goto('/admin/login')
+    await page.getByLabel('Email').fill(EMAIL)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await page.waitForURL(/\/admin$/)
+
+    await page.goto('/admin/outdated')
+
+    // A source that returns 200 but serves no readable body is the dangerous
+    // case: it looks healthy, so it needs its own panel rather than a green tick.
+    await expect(
+      page.getByRole('heading', {
+        name: /Sources whose content cannot be read automatically/,
+      }),
+    ).toBeVisible()
+    await expect(
+      page.getByText(/drift detector cannot tell whether the content changed/i),
+    ).toBeVisible()
+
+    await expect(
+      page.getByRole('heading', { name: /Sources that changed since a previous snapshot/ }),
+    ).toBeVisible()
+  })
+
   test('the admin area is excluded from indexing', async ({ page }) => {
     const response = await page.goto('/robots.txt')
     const body = (await response!.text()).toLowerCase()
